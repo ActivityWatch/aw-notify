@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "aw-notify"
+version = "0.1.0"
+description = ""
+authors = ["Erik Bjäreholt <erik@bjareho.lt>"]
+license = "MPL-2.0"
+readme = "README.md"
+packages = [{include = "aw_notify"}]
+
+[tool.poetry.dependencies]
+python = "^3.10,<3.12"
+aw-client = "^0.5.11"
+desktop-notifier = "^3.4.2"
+
+[tool.poetry.group.dev.dependencies]
+black = "^22.12.0"
+mypy = "^0.991"
+pyinstaller = "^5.7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

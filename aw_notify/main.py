@@ -24,6 +24,7 @@ def main():
         ThresholdObserver(desktop_observable, timedelta(hours=4)),
     )
 
+    desktop_observable.freeze()
     desktop_observable.start()
 
 

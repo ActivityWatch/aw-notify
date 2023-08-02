@@ -3,7 +3,6 @@ Get time spent for different categories in a day,
 and send notifications to the user on predefined conditions.
 """
 
-import sys
 from datetime import datetime, timedelta, timezone
 from time import sleep
 
@@ -108,7 +107,9 @@ td15min = timedelta(minutes=15)
 td30min = timedelta(minutes=30)
 td1h = timedelta(hours=1)
 td2h = timedelta(hours=2)
+td6h = timedelta(hours=6)
 td4h = timedelta(hours=4)
+td8h = timedelta(hours=8)
 
 
 class CategoryAlert:
@@ -151,7 +152,7 @@ class CategoryAlert:
         time_to_threshold = self.time_to_next_threshold
         # print("Update?")
         if now > (self.last_check + time_to_threshold):
-            # print("Updating...")
+            print(f"Updating {self.category}")
             # print(f"Time to threshold: {time_to_threshold}")
             self.last_check = now
             self.time_spent = get_time(self.category)
@@ -165,15 +166,13 @@ class CategoryAlert:
             if thres <= self.time_spent:
                 # threshold reached
                 self.max_triggered = thres
-                notify(f"[Alert]: {self.category} for {to_hms(thres)}")
+                notify(f"[Alert]: {self.category or 'All'} for {to_hms(thres)}")
                 break
 
     def status(self) -> str:
-        ttnt = self.time_to_next_threshold
-        return f"""{self.category}:
-    time spent: {to_hms(self.time_spent)}
-    time to next threshold: {to_hms(ttnt) if ttnt else "None"}
-    triggered: {self.max_triggered}"""
+        return f"""{self.category or 'All'}: {to_hms(self.time_spent)}"""
+        # (time to thres: {to_hms(self.time_to_next_threshold)})
+        # triggered: {self.max_triggered}"""
 
 
 def test_category_alert():
@@ -182,24 +181,42 @@ def test_category_alert():
     catalert.check()
 
 
-def main():
-    # keeps a cache of elapsed durations,
-    # to prevent checking screentime too often
-    # and to prevent triggering the same threshold multiple times
-
+def threshold_alerts():
+    """
+    Checks elapsed time for each category and triggers alerts when thresholds are reached.
+    """
     alerts = [
+        CategoryAlert("", [td15min, td30min, td1h, td2h, td4h, td6h, td8h]),
         CategoryAlert("Twitter", [td15min, td30min, td1h]),
         CategoryAlert("Work", [td15min, td30min, td1h, td2h, td4h]),
     ]
 
     while True:
         for alert in alerts:
-            print("---")
             alert.update()
             alert.check()
             print(alert.status())
 
-        sleep(60)
+        sleep(10)
+
+
+def checkin():
+    """
+    Sends a summary notification of the day.
+    Meant to be sent at a particular time, like at the end of a working day (e.g. 5pm).
+    """
+    # TODO: load categories from data
+    top_categories = ["", "Work", "Twitter"]
+    time_spent = [get_time(c) for c in top_categories]
+    msg = f"Time spent today: {sum(time_spent, timedelta())}\n"
+    msg += "Categories:\n"
+    msg += "\n".join(f" - {c}: {t}" for c, t in zip(top_categories, time_spent))
+    notify(msg)
+
+
+def main():
+    checkin()
+    threshold_alerts()
 
 
 if __name__ == "__main__":

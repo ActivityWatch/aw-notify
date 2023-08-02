@@ -1,8 +1,9 @@
 """
-Get time spent for different categories in a day, and send notifications to the user on predefined conditions.
+Get time spent for different categories in a day,
+and send notifications to the user on predefined conditions.
 """
 
-import re
+import sys
 from datetime import datetime, timedelta, timezone
 from time import sleep
 
@@ -11,9 +12,10 @@ import aw_client.queries
 from desktop_notifier import DesktopNotifier
 
 # TODO: Get categories from aw-webui export (in the future from server key-val store)
+# TODO: Add thresholds for total time today (incl percentage of productive time)
 
 # regex for productive time
-RE_PRODUCTIVE = r"Programming|nvim"
+RE_PRODUCTIVE = r"Programming|nvim|taxes|Roam|Code"
 
 
 CATEGORIES: list[tuple[list[str], dict]] = [
@@ -24,7 +26,15 @@ CATEGORIES: list[tuple[list[str], dict]] = [
             "regex": RE_PRODUCTIVE,
             "ignore_case": True,
         },
-    )
+    ),
+    (
+        ["Twitter"],
+        {
+            "type": "regex",
+            "regex": r"Twitter|twitter.com|Home / X",
+            "ignore_case": True,
+        },
+    ),
 ]
 
 time_offset = timedelta(hours=4)
@@ -46,7 +56,7 @@ def get_time(category: str) -> timedelta:
             bid_window="aw-watcher-window_erb-m2.localdomain",
             bid_afk="aw-watcher-afk_erb-m2.localdomain",
             classes=CATEGORIES,
-            filter_classes=[["Work"]],
+            filter_classes=[[category]] if category else [],
         )
     )
     query = f"""
@@ -57,15 +67,16 @@ def get_time(category: str) -> timedelta:
 
     res = aw.query(query, timeperiods)[0]
     time = timedelta(seconds=res["duration"])
-    print(f"{category} time: {time}")
-
     return time
 
 
 def to_hms(duration: timedelta) -> str:
+    days = duration.days
     hours, remainder = divmod(duration.seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     s = ""
+    if days > 0:
+        s += f"{days}d "
     if hours > 0:
         s += f"{hours}h "
     if minutes > 0:
@@ -73,57 +84,6 @@ def to_hms(duration: timedelta) -> str:
     if len(s) == 0:
         s += f"{seconds}s "
     return s.strip()
-
-
-class Threshold:
-    # class for thresholds
-    # stores the time and message for a threshold
-    # and whether the threshold has been triggered before
-
-    triggered: datetime = None
-
-    def __init__(self, duration: timedelta, category: str):
-        self.duration = duration
-        self.category = "Work"
-
-    def trigger(self):
-        if self.triggered is None:
-            self.triggered = datetime.now(timezone.utc)
-            return True
-        return False
-
-    def message(self):
-        # translate timedelta into "Xh Ym Zs" format
-        hms = to_hms(self.duration)
-        return f"You have been doing {self.category} for {hms}."
-
-
-thresholds = [
-    Threshold(timedelta(minutes=15), "Work"),
-    Threshold(timedelta(minutes=30), "Work"),
-    Threshold(timedelta(minutes=32), "Work"),
-    Threshold(timedelta(minutes=33), "Work"),
-    Threshold(timedelta(minutes=34), "Work"),
-    Threshold(timedelta(minutes=35), "Work"),
-    Threshold(timedelta(hours=1), "Work"),
-    Threshold(timedelta(hours=2), "Work"),
-    Threshold(timedelta(hours=3), "Work"),
-    Threshold(timedelta(hours=4), "Work"),
-]
-
-
-def alert(time: timedelta):
-    # alert a user when a threshold has been reached the first time
-    # if several thresholds match, only the last/most constrained one is alerted
-    # if the threshold is reached again, no alert is sent
-
-    for thres in sorted(thresholds, reverse=True, key=lambda x: x.duration):
-        if thres.triggered:
-            break
-        if time > thres.duration:
-            notify(thres.message())
-            thres.trigger()
-            break
 
 
 notifier: DesktopNotifier = None
@@ -144,8 +104,103 @@ def notify(msg: str):
     notifier.send_sync(title="AW", message=msg)
 
 
-if __name__ == "__main__":
+td15min = timedelta(minutes=15)
+td30min = timedelta(minutes=30)
+td1h = timedelta(hours=1)
+td2h = timedelta(hours=2)
+td4h = timedelta(hours=4)
+
+
+class CategoryAlert:
+    """
+    Alerts for a category.
+    Keeps track of the time spent so far, which alerts to trigger, and which have been triggered.
+    """
+
+    def __init__(self, category: str, thresholds: list[timedelta]):
+        self.category = category
+        self.thresholds = thresholds
+        self.max_triggered: timedelta = timedelta()
+        self.time_spent = timedelta()
+        self.last_check = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    @property
+    def thresholds_untriggered(self):
+        return [t for t in self.thresholds if t > self.max_triggered]
+
+    @property
+    def time_to_next_threshold(self) -> timedelta:
+        """Returns the earliest time at which the next threshold can be reached."""
+        if not self.thresholds_untriggered:
+            # if no thresholds to trigger, wait until tomorrow
+            day_end = datetime.now(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            if day_end < datetime.now(timezone.utc):
+                day_end += timedelta(days=1)
+            time_to_next_day = day_end - datetime.now(timezone.utc) + time_offset
+            return time_to_next_day + min(self.thresholds)
+
+        return min(self.thresholds_untriggered) - self.time_spent
+
+    def update(self):
+        """
+        Update the time spent and check if a threshold has been reached.
+        """
+        now = datetime.now(timezone.utc)
+        time_to_threshold = self.time_to_next_threshold
+        # print("Update?")
+        if now > (self.last_check + time_to_threshold):
+            # print("Updating...")
+            # print(f"Time to threshold: {time_to_threshold}")
+            self.last_check = now
+            self.time_spent = get_time(self.category)
+        else:
+            pass
+            # print("Not updating, too soon")
+
+    def check(self):
+        """Check if thresholds have been reached"""
+        for thres in sorted(self.thresholds_untriggered, reverse=True):
+            if thres <= self.time_spent:
+                # threshold reached
+                self.max_triggered = thres
+                notify(f"[Alert]: {self.category} for {to_hms(thres)}")
+                break
+
+    def status(self) -> str:
+        ttnt = self.time_to_next_threshold
+        return f"""{self.category}:
+    time spent: {to_hms(self.time_spent)}
+    time to next threshold: {to_hms(ttnt) if ttnt else "None"}
+    triggered: {self.max_triggered}"""
+
+
+def test_category_alert():
+    catalert = CategoryAlert("Work", [td15min, td30min, td1h, td2h, td4h])
+    catalert.update()
+    catalert.check()
+
+
+def main():
+    # keeps a cache of elapsed durations,
+    # to prevent checking screentime too often
+    # and to prevent triggering the same threshold multiple times
+
+    alerts = [
+        CategoryAlert("Twitter", [td15min, td30min, td1h]),
+        CategoryAlert("Work", [td15min, td30min, td1h, td2h, td4h]),
+    ]
+
     while True:
-        time = get_time("Work")
-        alert(time)
+        for alert in alerts:
+            print("---")
+            alert.update()
+            alert.check()
+            print(alert.status())
+
         sleep(60)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,14 +1,19 @@
 [tool.poetry]
 name = "aw-notify"
 version = "0.1.0"
-description = ""
+description = "Screentime notifications using ActivityWatch"
 authors = ["Erik Bjäreholt <erik@bjareho.lt>"]
 license = "MPL-2.0"
 readme = "README.md"
+homepage = "https://activitywatch.net/"
+repository = "https://github.com/ActivityWatch/aw-notify/"
 packages = [{include = "aw_notify"}]
 
+[tool.poetry.scripts]
+aw-notify = "aw_notify.main:main"
+
 [tool.poetry.dependencies]
-python = "^3.10,<3.12"
+python = "^3.9,<3.12"
 aw-client = "^0.5.11"
 desktop-notifier = "^3.4.2"
 
@@ -16,6 +21,7 @@ desktop-notifier = "^3.4.2"
 black = "^22.12.0"
 mypy = "^0.991"
 pyinstaller = "^5.7.0"
+pytest = "^7.4.0"
 
 [build-system]
 requires = ["poetry-core"]

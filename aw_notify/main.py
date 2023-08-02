@@ -8,6 +8,7 @@ from time import sleep
 
 import aw_client
 import aw_client.queries
+import click
 from desktop_notifier import DesktopNotifier
 
 # TODO: Get categories from aw-webui export (in the future from server key-val store)
@@ -181,6 +182,18 @@ def test_category_alert():
     catalert.check()
 
 
+@click.group()
+def main():
+    pass
+
+
+@main.command()
+def start():
+    """Start the notification service."""
+    checkin()
+    threshold_alerts()
+
+
 def threshold_alerts():
     """
     Checks elapsed time for each category and triggers alerts when thresholds are reached.
@@ -200,6 +213,7 @@ def threshold_alerts():
         sleep(10)
 
 
+@main.command()
 def checkin():
     """
     Sends a summary notification of the day.
@@ -212,11 +226,6 @@ def checkin():
     msg += "Categories:\n"
     msg += "\n".join(f" - {c}: {t}" for c, t in zip(top_categories, time_spent))
     notify(msg)
-
-
-def main():
-    checkin()
-    threshold_alerts()
 
 
 if __name__ == "__main__":

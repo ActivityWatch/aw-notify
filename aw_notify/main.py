@@ -93,6 +93,12 @@ def to_hms(duration: timedelta) -> str:
 
 notifier: DesktopNotifier = None
 
+# executable path
+from pathlib import Path
+
+script_dir = Path(__file__).parent.absolute()
+icon_path = script_dir / ".." / "media" / "logo" / "logo.png"
+
 
 def notify(title: str, msg: str):
     # send a notification to the user
@@ -101,11 +107,11 @@ def notify(title: str, msg: str):
     if notifier is None:
         notifier = DesktopNotifier(
             app_name="ActivityWatch",
-            # icon="file:///path/to/icon.png",
+            app_icon=f"file://{icon_path}",
             notification_limit=10,
         )
 
-    print(msg)
+    logger.info(f'Showing: "{title} - {msg}"')
     notifier.send_sync(title=title, message=msg)
 
 
@@ -174,7 +180,7 @@ class CategoryAlert:
                 self.max_triggered = thres
                 notify(
                     "Time spent",
-                    f"{self.category or 'All'}: {to_hms(self.time_spent)}",
+                    f"{self.category or 'All'}: {to_hms(thres)} reached! ({to_hms(self.time_spent)})",
                 )
                 break
 
@@ -210,7 +216,7 @@ def threshold_alerts():
     Checks elapsed time for each category and triggers alerts when thresholds are reached.
     """
     alerts = [
-        CategoryAlert("", [td15min, td30min, td1h, td2h, td4h, td6h, td8h]),
+        CategoryAlert("", [td1h, td2h, td4h, td6h, td8h]),
         CategoryAlert("Twitter", [td15min, td30min, td1h]),
         CategoryAlert("Work", [td15min, td30min, td1h, td2h, td4h]),
     ]
@@ -221,7 +227,7 @@ def threshold_alerts():
             alert.check()
             status = alert.status()
             if status != getattr(alert, "last_status", None):
-                print(f"New status: {status}")
+                logger.info(f"New status: {status}")
                 alert.last_status = status
 
         sleep(10)

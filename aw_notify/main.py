@@ -3,6 +3,8 @@ Get time spent for different categories in a day,
 and send notifications to the user on predefined conditions.
 """
 
+import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from time import sleep
 
@@ -10,6 +12,8 @@ import aw_client
 import aw_client.queries
 import click
 from desktop_notifier import DesktopNotifier
+
+logger = logging.getLogger(__name__)
 
 # TODO: Get categories from aw-webui export (in the future from server key-val store)
 # TODO: Add thresholds for total time today (incl percentage of productive time)
@@ -39,10 +43,10 @@ CATEGORIES: list[tuple[list[str], dict]] = [
 
 time_offset = timedelta(hours=4)
 
+aw = aw_client.ActivityWatchClient("aw-notify", testing=False)
+
 
 def get_time(category: str) -> timedelta:
-    aw = aw_client.ActivityWatchClient("aw-notify", testing=False)
-
     now = datetime.now(timezone.utc)
     timeperiods = [
         (
@@ -51,10 +55,11 @@ def get_time(category: str) -> timedelta:
         )
     ]
 
+    hostname = aw.get_info().get("hostname", "unknown")
     canonicalQuery = aw_client.queries.canonicalEvents(
         aw_client.queries.DesktopQueryParams(
-            bid_window="aw-watcher-window_erb-m2.localdomain",
-            bid_afk="aw-watcher-afk_erb-m2.localdomain",
+            bid_window=f"aw-watcher-window_{hostname}",
+            bid_afk=f"aw-watcher-afk_{hostname}",
             classes=CATEGORIES,
             filter_classes=[[category]] if category else [],
         )
@@ -89,19 +94,19 @@ def to_hms(duration: timedelta) -> str:
 notifier: DesktopNotifier = None
 
 
-def notify(msg: str):
+def notify(title: str, msg: str):
     # send a notification to the user
 
     global notifier
     if notifier is None:
         notifier = DesktopNotifier(
-            app_name="ActivityWatch notify",
+            app_name="ActivityWatch",
             # icon="file:///path/to/icon.png",
             notification_limit=10,
         )
 
     print(msg)
-    notifier.send_sync(title="AW", message=msg)
+    notifier.send_sync(title=title, message=msg)
 
 
 td15min = timedelta(minutes=15)
@@ -153,13 +158,13 @@ class CategoryAlert:
         time_to_threshold = self.time_to_next_threshold
         # print("Update?")
         if now > (self.last_check + time_to_threshold):
-            print(f"Updating {self.category}")
+            logger.debug(f"Updating {self.category}")
             # print(f"Time to threshold: {time_to_threshold}")
             self.last_check = now
             self.time_spent = get_time(self.category)
         else:
             pass
-            # print("Not updating, too soon")
+            # logger.debug("Not updating, too soon")
 
     def check(self):
         """Check if thresholds have been reached"""
@@ -167,7 +172,10 @@ class CategoryAlert:
             if thres <= self.time_spent:
                 # threshold reached
                 self.max_triggered = thres
-                notify(f"[Alert]: {self.category or 'All'} for {to_hms(thres)}")
+                notify(
+                    "Time spent",
+                    f"{self.category or 'All'}: {to_hms(self.time_spent)}",
+                )
                 break
 
     def status(self) -> str:
@@ -183,14 +191,17 @@ def test_category_alert():
 
 
 @click.group()
-def main():
-    pass
+@click.option("-v", "--verbose", is_flag=True, help="Enables verbose mode.")
+def main(verbose: bool):
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 @main.command()
 def start():
     """Start the notification service."""
     checkin()
+    hourly()
     threshold_alerts()
 
 
@@ -208,24 +219,87 @@ def threshold_alerts():
         for alert in alerts:
             alert.update()
             alert.check()
-            print(alert.status())
+            status = alert.status()
+            if status != getattr(alert, "last_status", None):
+                print(f"New status: {status}")
+                alert.last_status = status
 
         sleep(10)
 
 
 @main.command()
+def _checkin():
+    """Send a summary notification."""
+    checkin()
+
+
 def checkin():
     """
     Sends a summary notification of the day.
     Meant to be sent at a particular time, like at the end of a working day (e.g. 5pm).
     """
     # TODO: load categories from data
-    top_categories = ["", "Work", "Twitter"]
+    top_categories = [""] + [k[0] for k, _ in CATEGORIES]
     time_spent = [get_time(c) for c in top_categories]
     msg = f"Time spent today: {sum(time_spent, timedelta())}\n"
     msg += "Categories:\n"
-    msg += "\n".join(f" - {c}: {t}" for c, t in zip(top_categories, time_spent))
-    notify(msg)
+    msg += "\n".join(
+        f" - {c if c else 'All'}: {t}"
+        for c, t in sorted(
+            zip(top_categories, time_spent), key=lambda x: x[1], reverse=True
+        )
+    )
+    notify("Checkin", msg)
+
+
+def get_active_status() -> bool:
+    """
+    Get active status by polling latest event in aw-watcher-afk bucket.
+    Returns True if user is active/not-afk, False if not.
+    On error, like out-of-date event, returns None.
+    """
+
+    hostname = aw.get_info().get("hostname", "unknown")
+    events = aw.get_events(f"aw-watcher-afk_{hostname}", limit=1)
+    print(events)
+    if not events:
+        return None
+    event = events[0]
+    if event.timestamp < datetime.now(timezone.utc) - timedelta(minutes=5):
+        # event is too old
+        logger.warning(
+            "AFK event is too old, can't use to reliably determine AFK state"
+        )
+        return None
+    return events[0]["data"]["status"] == "not-afk"
+
+
+def hourly():
+    """Start a thread that does hourly checkins, on every whole hour that the user is active (not if afk)."""
+
+    def checkin_thread():
+        while True:
+            # wait until next whole hour
+            now = datetime.now(timezone.utc)
+            next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(
+                hours=1
+            )
+            sleep_time = (next_hour - now).total_seconds()
+            logger.debug(f"Sleeping for {sleep_time} seconds")
+            sleep(sleep_time)
+
+            # check if user is afk
+            active = get_active_status()
+            if active is None:
+                logger.warning("Can't determine AFK status, skipping hourly checkin")
+                continue
+            if not active:
+                logger.info("User is AFK, skipping hourly checkin")
+                continue
+
+            checkin()
+
+    threading.Thread(target=checkin_thread, daemon=True).start()
 
 
 if __name__ == "__main__":

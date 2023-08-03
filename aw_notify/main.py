@@ -7,6 +7,7 @@ import logging
 import threading
 from datetime import datetime, timedelta, timezone
 from time import sleep
+from typing import Optional
 
 import aw_client
 import aw_client.queries
@@ -39,14 +40,49 @@ CATEGORIES: list[tuple[list[str], dict]] = [
             "ignore_case": True,
         },
     ),
+    (
+        ["Youtube"],
+        {
+            "type": "regex",
+            "regex": r"Youtube|youtube.com",
+            "ignore_case": True,
+        },
+    ),
 ]
 
 time_offset = timedelta(hours=4)
 
 aw = aw_client.ActivityWatchClient("aw-notify", testing=False)
 
+from functools import wraps
 
-def get_time(category: str) -> timedelta:
+
+def cache_ttl(ttl: timedelta):
+    """Decorator that caches the result of a function, with a given time-to-live."""
+
+    def wrapper(func):
+        @wraps(func)
+        def _cache_ttl(*args, **kwargs):
+            now = datetime.now(timezone.utc)
+            if now - _cache_ttl.last_update > ttl:
+                logger.debug(f"Cache expired for {func.__name__}, updating")
+                _cache_ttl.last_update = now
+                _cache_ttl.cache = func(*args, **kwargs)
+            return _cache_ttl.cache
+
+        _cache_ttl.last_update = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        _cache_ttl.cache = None
+        return _cache_ttl
+
+    return wrapper
+
+
+@cache_ttl(timedelta(minutes=1))
+def get_time() -> dict[str, timedelta]:
+    """
+    Returns a dict with the time spent today for each category.
+    """
+
     now = datetime.now(timezone.utc)
     timeperiods = [
         (
@@ -61,18 +97,21 @@ def get_time(category: str) -> timedelta:
             bid_window=f"aw-watcher-window_{hostname}",
             bid_afk=f"aw-watcher-afk_{hostname}",
             classes=CATEGORIES,
-            filter_classes=[[category]] if category else [],
         )
     )
     query = f"""
     {canonicalQuery}
     duration = sum_durations(events);
-    RETURN = {{"events": events, "duration": duration}};
+    cat_events = sort_by_duration(merge_events_by_keys(events, ["$category"]));
+    RETURN = {{"events": events, "duration": duration, "cat_events": cat_events}};
     """
 
     res = aw.query(query, timeperiods)[0]
-    time = timedelta(seconds=res["duration"])
-    return time
+    res["cat_events"] += [{"data": {"$category": ["All"]}, "duration": res["duration"]}]
+    return {
+        ">".join(c["data"]["$category"]): timedelta(seconds=c["duration"])
+        for c in res["cat_events"]
+    }
 
 
 def to_hms(duration: timedelta) -> str:
@@ -130,8 +169,11 @@ class CategoryAlert:
     Keeps track of the time spent so far, which alerts to trigger, and which have been triggered.
     """
 
-    def __init__(self, category: str, thresholds: list[timedelta]):
+    def __init__(
+        self, category: str, thresholds: list[timedelta], label: Optional[str] = None
+    ):
         self.category = category
+        self.label = label or category or "All"
         self.thresholds = thresholds
         self.max_triggered: timedelta = timedelta()
         self.time_spent = timedelta()
@@ -166,8 +208,12 @@ class CategoryAlert:
         if now > (self.last_check + time_to_threshold):
             logger.debug(f"Updating {self.category}")
             # print(f"Time to threshold: {time_to_threshold}")
-            self.last_check = now
-            self.time_spent = get_time(self.category)
+            try:
+                # TODO: move get_time call so that it is cached better
+                self.time_spent = get_time()[self.category]
+                self.last_check = now
+            except Exception as e:
+                logger.error(f"Error getting time for {self.category}: {e}")
         else:
             pass
             # logger.debug("Not updating, too soon")
@@ -180,12 +226,12 @@ class CategoryAlert:
                 self.max_triggered = thres
                 notify(
                     "Time spent",
-                    f"{self.category or 'All'}: {to_hms(thres)} reached! ({to_hms(self.time_spent)})",
+                    f"{self.label}: {to_hms(thres)} reached! ({to_hms(self.time_spent)})",
                 )
                 break
 
     def status(self) -> str:
-        return f"""{self.category or 'All'}: {to_hms(self.time_spent)}"""
+        return f"""{self.label}: {to_hms(self.time_spent)}"""
         # (time to thres: {to_hms(self.time_to_next_threshold)})
         # triggered: {self.max_triggered}"""
 
@@ -199,7 +245,12 @@ def test_category_alert():
 @click.group()
 @click.option("-v", "--verbose", is_flag=True, help="Enables verbose mode.")
 def main(verbose: bool):
-    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO)
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format="%(asctime)s [%(levelname)5s] %(message)s"
+        + ("  (%(name)s.%(funcName)s:%(lineno)d)" if verbose else ""),
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
@@ -216,9 +267,10 @@ def threshold_alerts():
     Checks elapsed time for each category and triggers alerts when thresholds are reached.
     """
     alerts = [
-        CategoryAlert("", [td1h, td2h, td4h, td6h, td8h]),
-        CategoryAlert("Twitter", [td15min, td30min, td1h]),
-        CategoryAlert("Work", [td15min, td30min, td1h, td2h, td4h]),
+        CategoryAlert("All", [td1h, td2h, td4h, td6h, td8h], label="All"),
+        CategoryAlert("Twitter", [td15min, td30min, td1h], label="🐦 Twitter"),
+        CategoryAlert("Youtube", [td15min, td30min, td1h], label="📺 Youtube"),
+        CategoryAlert("Work", [td15min, td30min, td1h, td2h, td4h], label="💼 Work"),
     ]
 
     while True:
@@ -227,7 +279,7 @@ def threshold_alerts():
             alert.check()
             status = alert.status()
             if status != getattr(alert, "last_status", None):
-                logger.info(f"New status: {status}")
+                logger.debug(f"New status: {status}")
                 alert.last_status = status
 
         sleep(10)
@@ -245,12 +297,13 @@ def checkin():
     Meant to be sent at a particular time, like at the end of a working day (e.g. 5pm).
     """
     # TODO: load categories from data
-    top_categories = [""] + [k[0] for k, _ in CATEGORIES]
-    time_spent = [get_time(c) for c in top_categories]
-    msg = f"Time spent today: {sum(time_spent, timedelta())}\n"
+    top_categories = ["All"] + [k[0] for k, _ in CATEGORIES]
+    cat_time = get_time()
+    time_spent = [cat_time[c] for c in top_categories]
+    msg = f"Time spent today: {to_hms(time_spent[0])}\n"
     msg += "Categories:\n"
     msg += "\n".join(
-        f" - {c if c else 'All'}: {t}"
+        f" - {c if c else 'All'}: {to_hms(t)}"
         for c, t in sorted(
             zip(top_categories, time_spent), key=lambda x: x[1], reverse=True
         )
@@ -267,11 +320,12 @@ def get_active_status() -> bool:
 
     hostname = aw.get_info().get("hostname", "unknown")
     events = aw.get_events(f"aw-watcher-afk_{hostname}", limit=1)
-    print(events)
+    logger.debug(events)
     if not events:
         return None
     event = events[0]
-    if event.timestamp < datetime.now(timezone.utc) - timedelta(minutes=5):
+    event_end = event.timestamp + event.duration
+    if event_end < datetime.now(timezone.utc) - timedelta(minutes=5):
         # event is too old
         logger.warning(
             "AFK event is too old, can't use to reliably determine AFK state"
@@ -295,7 +349,11 @@ def hourly():
             sleep(sleep_time)
 
             # check if user is afk
-            active = get_active_status()
+            try:
+                active = get_active_status()
+            except Exception as e:
+                logger.warning(f"Error getting AFK status: {e}")
+                continue
             if active is None:
                 logger.warning("Can't determine AFK status, skipping hourly checkin")
                 continue

@@ -2,14 +2,14 @@
 Get time spent for different categories in a day,
 and send notifications to the user on predefined conditions.
 """
-
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
+from functools import wraps
+from pathlib import Path
 from time import sleep
-from typing import Optional
+from typing import Optional, Union
 
-import aw_client
 import aw_client.queries
 import click
 from desktop_notifier import DesktopNotifier
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # regex for productive time
 RE_PRODUCTIVE = r"Programming|nvim|taxes|Roam|Code"
+TIME_OFFSET = timedelta(hours=4)
 
 
 CATEGORIES: list[tuple[list[str], dict]] = [
@@ -54,17 +55,16 @@ time_offset = timedelta(hours=4)
 
 aw = aw_client.ActivityWatchClient("aw-notify", testing=False)
 
-from functools import wraps
 
-
-def cache_ttl(ttl: timedelta):
-    """Decorator that caches the result of a function, with a given time-to-live."""
+def cache_ttl(ttl: Union[timedelta, int]):
+    """Decorator that caches the result of a function in-memory, with a given time-to-live."""
+    _ttl: timedelta = ttl if isinstance(ttl, timedelta) else timedelta(seconds=ttl)
 
     def wrapper(func):
         @wraps(func)
         def _cache_ttl(*args, **kwargs):
             now = datetime.now(timezone.utc)
-            if now - _cache_ttl.last_update > ttl:
+            if now - _cache_ttl.last_update > _ttl:
                 logger.debug(f"Cache expired for {func.__name__}, updating")
                 _cache_ttl.last_update = now
                 _cache_ttl.cache = func(*args, **kwargs)
@@ -133,7 +133,6 @@ def to_hms(duration: timedelta) -> str:
 notifier: DesktopNotifier = None
 
 # executable path
-from pathlib import Path
 
 script_dir = Path(__file__).parent.absolute()
 icon_path = script_dir / ".." / "media" / "logo" / "logo.png"
@@ -208,12 +207,8 @@ class CategoryAlert:
         if now > (self.last_check + time_to_threshold):
             logger.debug(f"Updating {self.category}")
             # print(f"Time to threshold: {time_to_threshold}")
-            try:
-                # TODO: move get_time call so that it is cached better
-                self.time_spent = get_time()[self.category]
-                self.last_check = now
-            except Exception as e:
-                logger.error(f"Error getting time for {self.category}: {e}")
+            self.time_spent = get_time().get(self.category, timedelta())
+            self.last_check = now
         else:
             pass
             # logger.debug("Not updating, too soon")
@@ -258,7 +253,8 @@ def main(verbose: bool):
 def start():
     """Start the notification service."""
     checkin()
-    hourly()
+    start_hourly()
+    start_new_day()
     threshold_alerts()
 
 
@@ -299,7 +295,7 @@ def checkin():
     # TODO: load categories from data
     top_categories = ["All"] + [k[0] for k, _ in CATEGORIES]
     cat_time = get_time()
-    time_spent = [cat_time[c] for c in top_categories]
+    time_spent = [cat_time.get(c, timedelta()) for c in top_categories]
     msg = f"Time spent today: {to_hms(time_spent[0])}\n"
     msg += "Categories:\n"
     msg += "\n".join(
@@ -307,10 +303,12 @@ def checkin():
         for c, t in sorted(
             zip(top_categories, time_spent), key=lambda x: x[1], reverse=True
         )
+        if t
     )
     notify("Checkin", msg)
 
 
+@cache_ttl(60)
 def get_active_status() -> bool:
     """
     Get active status by polling latest event in aw-watcher-afk bucket.
@@ -334,7 +332,7 @@ def get_active_status() -> bool:
     return events[0]["data"]["status"] == "not-afk"
 
 
-def hourly():
+def start_hourly():
     """Start a thread that does hourly checkins, on every whole hour that the user is active (not if afk)."""
 
     def checkin_thread():
@@ -364,6 +362,38 @@ def hourly():
             checkin()
 
     threading.Thread(target=checkin_thread, daemon=True).start()
+
+
+def start_new_day():
+    """
+    Start a thread that sends a notification when the user first becomes active (not afk) on a new days (at TIME_OFFSET).
+    """
+
+    def new_day_thread():
+        last_day = None
+        while True:
+            now = datetime.now(timezone.utc)
+            day = (now - TIME_OFFSET).date()
+            if day != last_day:
+                active = get_active_status()
+                if active:
+                    logger.info("New day, sending notification")
+                    day_of_week = day.strftime("%A")
+                    # TODO: Better message
+                    #       - summary of yesterday?
+                    #       - average time spent per day?
+                    notify("New day", f"It is {day_of_week}, {day}")
+                    last_day = day
+                elif active is None:
+                    logger.warning("Can't determine AFK status, skipping new day check")
+            else:
+                start_of_tomorrow = (now + timedelta(days=1)).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                sleep((start_of_tomorrow - now).total_seconds())
+            sleep(60)
+
+    threading.Thread(target=new_day_thread, daemon=True).start()
 
 
 if __name__ == "__main__":

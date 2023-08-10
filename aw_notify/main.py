@@ -365,7 +365,9 @@ def threshold_alerts():
         CategoryAlert("All", [td1h, td2h, td4h, td6h, td8h], label="All"),
         CategoryAlert("Twitter", [td15min, td30min, td1h], label="🐦 Twitter"),
         CategoryAlert("Youtube", [td15min, td30min, td1h], label="📺 Youtube"),
-        CategoryAlert("Work", [td15min, td30min, td1h, td2h, td4h], label="💼 Work"),
+        CategoryAlert(
+            "Work", [td15min, td30min, td1h, td2h, td4h], label="💼 Work", positive=True
+        ),
     ]
 
     # run through them once to check if any thresholds have been reached

@@ -18,7 +18,7 @@ aw-client = "^0.5.11"
 desktop-notifier = "^3.4.2"
 
 [tool.poetry.group.dev.dependencies]
-black = "^22.12"
+black = "*"
 mypy = "*"
 pyinstaller = "^5.7"
 pytest = "^7.4"

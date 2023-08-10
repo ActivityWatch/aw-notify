@@ -18,10 +18,10 @@ aw-client = "^0.5.11"
 desktop-notifier = "^3.4.2"
 
 [tool.poetry.group.dev.dependencies]
-black = "^22.12.0"
-mypy = "^0.991"
-pyinstaller = "^5.7.0"
-pytest = "^7.4.0"
+black = "^22.12"
+mypy = "*"
+pyinstaller = "^5.7"
+pytest = "^7.4"
 
 [build-system]
 requires = ["poetry-core"]

@@ -123,14 +123,14 @@ def cache_ttl(ttl: Union[timedelta, int]):
 
     _ttl: timedelta = ttl if isinstance(ttl, timedelta) else timedelta(seconds=ttl)
 
-    def wrapper(func: Callable[..., T]):
+    def wrapper(func: Callable[..., T]) -> Callable[..., T]:
         last_update: dict[CacheKey, datetime] = defaultdict(
             lambda: datetime(1970, 1, 1, tzinfo=timezone.utc)
         )
         cache: dict[CacheKey, T] = {}
 
         @wraps(func)
-        def _cache_ttl(*args, **kwargs):
+        def _cache_ttl(*args, **kwargs) -> T:
             now = datetime.now(timezone.utc)
             cache_key: CacheKey = (*args, *kwargs.items())
             if now - last_update[cache_key] > _ttl:

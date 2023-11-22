@@ -14,7 +14,7 @@ aw-notify = "aw_notify.main:main"
 
 [tool.poetry.dependencies]
 python = "^3.9,<3.12"
-aw-client = "^0.5.11"
+aw-client = "^0.5.13"
 desktop-notifier = "^3.4.2"
 
 [tool.poetry.group.dev.dependencies]

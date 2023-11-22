@@ -3,7 +3,6 @@ Get time spent for different categories in a day,
 and send notifications to the user on predefined conditions.
 """
 import logging
-import os
 import threading
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -19,99 +18,15 @@ from typing import (
 
 import aw_client.queries
 import click
-import tomlkit
 from desktop_notifier import DesktopNotifier
 from typing_extensions import TypeAlias
 
 # TODO: Add thresholds for total time today (incl percentage of productive time)
 
 logger = logging.getLogger(__name__)
+
+# TODO: read from server settings
 TIME_OFFSET = timedelta(hours=4)
-FALLBACK_CATEGORIES: list[tuple[list[str], dict]] = [
-    (
-        ["Work"],
-        {
-            "type": "regex",
-            "regex": "Programming|nvim|taxes|Roam|Code",
-        },
-    ),
-    (
-        ["Twitter"],
-        {
-            "type": "regex",
-            "regex": r"Twitter|twitter.com|Home / X",
-        },
-    ),
-    (
-        ["Youtube"],
-        {
-            "type": "regex",
-            "regex": r"Youtube|youtube.com",
-        },
-    ),
-]
-
-
-# TODO: move to aw-client utils
-# TODO: Get categories from aw-webui export (in the future from server key-val store)
-def load_category_toml(path: Path) -> list[tuple[list[str], dict]]:
-    with open(path, "r") as f:
-        toml = tomlkit.load(f)
-    return parse_category_toml(toml, parent=[])
-
-
-def parse_category_toml(toml: dict, parent: list[str]) -> list[tuple[list[str], dict]]:
-    """
-    Parse category config file and return a list of categories.
-    """
-    categories = []
-    if "categories" in toml:
-        toml = toml["categories"]
-    for cat_name, cat in toml.items():
-        if isinstance(cat, dict):
-            categories += parse_category_toml(cat, parent=parent + [cat_name])
-        else:
-            if cat_name == "$re":
-                categories.append((parent, {"type": "regex", "regex": cat}))
-            else:
-                categories.append(
-                    (parent + [cat_name], {"type": "regex", "regex": cat})
-                )
-    # create parent category with no rule if $re not given
-    if parent and parent not in (c for c, _ in categories):
-        categories.append((parent, {"type": "none"}))
-    return sorted(categories)
-
-
-def test_parse_category_toml():
-    """
-    Test parsing of category config file.
-    """
-    # Example category config file:
-    config = """
-    [categories]
-        [categories.Media]
-        Music = '[Ss]potify|[Ss]ound[Cc]loud|Mixxx|Shazam'
-            [categories.Media.Games]
-            '$re' = 'Video Games'
-            Steam = 'Steam'
-    """
-    categories = parse_category_toml(tomlkit.loads(config), parent=[])
-
-    # Check that "Media" category exists
-    assert categories[0][0] == ["Media"]
-
-    # Check that "Games" category exists, and has the correct regex
-    assert categories[1][0] == ["Media", "Games"]
-    assert categories[1][1]["regex"] == "Video Games"
-    assert categories[2][0] == ["Media", "Games", "Steam"]
-    assert categories[2][1]["regex"] == "Steam"
-
-
-CATEGORIES = FALLBACK_CATEGORIES
-
-
-time_offset = timedelta(hours=4)
 
 aw = aw_client.ActivityWatchClient("aw-notify", testing=False)
 
@@ -155,8 +70,8 @@ def get_time(date=None) -> dict[str, timedelta]:
     date = date.replace(hour=0, minute=0, second=0, microsecond=0)
     timeperiods = [
         (
-            date + time_offset,
-            date + time_offset + timedelta(days=1),
+            date + TIME_OFFSET,
+            date + TIME_OFFSET + timedelta(days=1),
         )
     ]
 
@@ -165,7 +80,6 @@ def get_time(date=None) -> dict[str, timedelta]:
         aw_client.queries.DesktopQueryParams(
             bid_window=f"aw-watcher-window_{hostname}",
             bid_afk=f"aw-watcher-afk_{hostname}",
-            classes=CATEGORIES,
         )
     )
     query = f"""
@@ -277,7 +191,7 @@ class CategoryAlert:
             )
             if day_end < datetime.now(timezone.utc):
                 day_end += timedelta(days=1)
-            time_to_next_day = day_end - datetime.now(timezone.utc) + time_offset
+            time_to_next_day = day_end - datetime.now(timezone.utc) + TIME_OFFSET
             return time_to_next_day + min(self.thresholds)
 
         return min(self.thresholds_untriggered) - self.time_spent
@@ -328,9 +242,10 @@ def test_category_alert():
     catalert.check()
 
 
-@click.group()
+@click.group(invoke_without_command=True)
+@click.pass_context
 @click.option("-v", "--verbose", is_flag=True, help="Enables verbose mode.")
-def main(verbose: bool):
+def main(ctx, verbose: bool):
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s [%(levelname)5s] %(message)s"
@@ -339,11 +254,8 @@ def main(verbose: bool):
     )
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-    AW_CATEGORY_PATH = os.environ.get("AW_CATEGORY_PATH", None)
-    if AW_CATEGORY_PATH:
-        global CATEGORIES
-        CATEGORIES = load_category_toml(Path(AW_CATEGORY_PATH))
-        logger.info("Loaded categories from $AW_CATEGORY_PATH")
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(start)
 
 
 @main.command()
@@ -398,9 +310,8 @@ def send_checkin(title="Time today", date=None):
     Sends a summary notification of the day.
     Meant to be sent at a particular time, like at the end of a working day (e.g. 5pm).
     """
-    categories = list(
-        set(["All", "Uncategorized"] + [">".join(k) for k, _ in CATEGORIES])
-    )
+    # TODO: make configurable which categories to show
+    categories = list(set(["All", "Work", "Uncategorized"]))
     cat_time = get_time(date=date)
     time_spent = [cat_time.get(c, timedelta()) for c in categories]
     top_categories = [

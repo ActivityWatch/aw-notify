@@ -3,6 +3,7 @@ Get time spent for different categories in a day,
 and send notifications to the user on predefined conditions.
 """
 import logging
+import platform
 import threading
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -251,6 +252,16 @@ def main(ctx, verbose: bool, testing: bool):
     setup_logging("aw-notify", testing=testing, verbose=verbose, log_file=True)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logger.info("Starting...")
+
+    # set NSBundle on macOS, needed for desktop-notifier
+    if platform.system() == "Darwin":
+        from rubicon.objc import ObjCClass
+
+        # needs to be the same as the one in the PyInstaller config (later Info.plist)
+        # could also be done by just monkey-patching the helper function is_signed_bundle in desktop-notifier
+        # see: https://github.com/samschott/desktop-notifier/issues/115
+        NSBundle = ObjCClass("NSBundle")
+        NSBundle.mainBundle.bundleIdentifier = "net.activitywatch.ActivityWatch"
 
     if ctx.invoked_subcommand is None:
         ctx.invoke(start)

@@ -18,6 +18,7 @@ from typing import (
 
 import aw_client.queries
 import click
+from aw_core.log import setup_logging
 from desktop_notifier import DesktopNotifier
 from typing_extensions import TypeAlias
 
@@ -244,15 +245,12 @@ def test_category_alert():
 
 @click.group(invoke_without_command=True)
 @click.pass_context
-@click.option("-v", "--verbose", is_flag=True, help="Enables verbose mode.")
-def main(ctx, verbose: bool):
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s [%(levelname)5s] %(message)s"
-        + ("  (%(name)s.%(funcName)s:%(lineno)d)" if verbose else ""),
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+@click.option("-v", "--verbose", is_flag=True, help="Verbose logging.")
+@click.option("--testing", is_flag=True, help="Enables testing mode.")
+def main(ctx, verbose: bool, testing: bool):
+    setup_logging("aw-notify", testing=testing, verbose=verbose, log_file=True)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logger.info("Starting...")
 
     if ctx.invoked_subcommand is None:
         ctx.invoke(start)

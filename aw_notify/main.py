@@ -62,7 +62,7 @@ def cache_ttl(ttl: Union[timedelta, int]):
 
 
 @cache_ttl(60)
-def get_time(date=None) -> dict[str, timedelta]:
+def get_time(date=None, top_level_only=True) -> dict[str, timedelta]:
     """
     Returns a dict with the time spent today (or for `date`) for each category.
     """
@@ -93,8 +93,6 @@ def get_time(date=None) -> dict[str, timedelta]:
 
     res = aw.query(query, timeperiods)[0]
     res["cat_events"] += [{"data": {"$category": ["All"]}, "duration": res["duration"]}]
-
-    top_level_only = True
 
     cat_time: dict[str, timedelta] = defaultdict(timedelta)
     for e in res["cat_events"]:
@@ -319,17 +317,15 @@ def send_checkin(title="Time today", date=None):
     Sends a summary notification of the day.
     Meant to be sent at a particular time, like at the end of a working day (e.g. 5pm).
     """
-    # TODO: make configurable which categories to show
-    categories = list(set(["All", "Work", "Uncategorized"]))
     cat_time = get_time(date=date)
-    time_spent = [cat_time.get(c, timedelta()) for c in categories]
+
+    # get the 4 top categories by time spent.
     top_categories = [
         (c, to_hms(t))
-        for c, t in sorted(
-            zip(categories, time_spent), key=lambda x: x[1], reverse=True
-        )
+        for c, t in sorted(cat_time.items(), key=lambda x: x[1], reverse=True)
         if t > 0.02 * cat_time["All"]
-    ]
+    ][:4]
+
     msg = ""
     msg += "\n".join(f"- {c}: {t}" for c, t in top_categories)
     if msg:

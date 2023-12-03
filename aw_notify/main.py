@@ -3,7 +3,7 @@ Get time spent for different categories in a day,
 and send notifications to the user on predefined conditions.
 """
 import logging
-import platform
+import sys
 import threading
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -23,20 +23,38 @@ from aw_core.log import setup_logging
 from desktop_notifier import DesktopNotifier
 from typing_extensions import TypeAlias
 
-# TODO: Add thresholds for total time today (incl percentage of productive time)
-
 logger = logging.getLogger(__name__)
 
+# Types
+AwClient = aw_client.ActivityWatchClient
+CacheKey: TypeAlias = tuple
+
+# Constants
+# TODO: Add thresholds for total time today (incl percentage of productive time)
 # TODO: read from server settings
 TIME_OFFSET = timedelta(hours=4)
 
-aw = aw_client.ActivityWatchClient("aw-notify", testing=False)
+td15min = timedelta(minutes=15)
+td30min = timedelta(minutes=30)
+td1h = timedelta(hours=1)
+td2h = timedelta(hours=2)
+td6h = timedelta(hours=6)
+td4h = timedelta(hours=4)
+td8h = timedelta(hours=8)
+
+# global objects
+# will init in entrypoints
+aw: Optional[AwClient] = None
+notifier: Optional[DesktopNotifier] = None
+
+# executable path
+script_dir = Path(__file__).parent.absolute()
+icon_path = script_dir / ".." / "media" / "logo" / "logo.png"
 
 
 def cache_ttl(ttl: Union[timedelta, int]):
     """Decorator that caches the result of a function in-memory, with a given time-to-live."""
     T = TypeVar("T")
-    CacheKey: TypeAlias = tuple
 
     _ttl: timedelta = ttl if isinstance(ttl, timedelta) else timedelta(seconds=ttl)
 
@@ -66,6 +84,7 @@ def get_time(date=None, top_level_only=True) -> dict[str, timedelta]:
     """
     Returns a dict with the time spent today (or for `date`) for each category.
     """
+    assert aw
 
     if date is None:
         date = datetime.now(timezone.utc)
@@ -120,16 +139,8 @@ def to_hms(duration: timedelta) -> str:
     return s.strip()
 
 
-notifier: DesktopNotifier = None
-
-# executable path
-
-script_dir = Path(__file__).parent.absolute()
-icon_path = script_dir / ".." / "media" / "logo" / "logo.png"
-
-
 def notify(title: str, msg: str):
-    # send a notification to the user
+    """send a notification to the user"""
 
     global notifier
     if notifier is None:
@@ -141,15 +152,6 @@ def notify(title: str, msg: str):
 
     logger.info(f'Showing: "{title} - {msg}"')
     notifier.send_sync(title=title, message=msg)
-
-
-td15min = timedelta(minutes=15)
-td30min = timedelta(minutes=30)
-td1h = timedelta(hours=1)
-td2h = timedelta(hours=2)
-td6h = timedelta(hours=6)
-td4h = timedelta(hours=4)
-td8h = timedelta(hours=8)
 
 
 class CategoryAlert:
@@ -242,6 +244,19 @@ def test_category_alert():
     catalert.check()
 
 
+def init_macos():
+    # set NSBundle on macOS, needed for desktop-notifier
+    from rubicon.objc import ObjCClass
+
+    logger.info("Setting NSBundle for macOS")
+
+    # needs to be the same as the one in the PyInstaller config (later Info.plist)
+    # could also be done by just monkey-patching the helper function is_signed_bundle in desktop-notifier
+    # see: https://github.com/samschott/desktop-notifier/issues/115
+    NSBundle = ObjCClass("NSBundle")
+    NSBundle.mainBundle.bundleIdentifier = "net.activitywatch.ActivityWatch"
+
+
 @click.group(invoke_without_command=True)
 @click.pass_context
 @click.option("-v", "--verbose", is_flag=True, help="Verbose logging.")
@@ -251,23 +266,20 @@ def main(ctx, verbose: bool, testing: bool):
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logger.info("Starting...")
 
-    # set NSBundle on macOS, needed for desktop-notifier
-    if platform.system() == "Darwin":
-        from rubicon.objc import ObjCClass
-
-        # needs to be the same as the one in the PyInstaller config (later Info.plist)
-        # could also be done by just monkey-patching the helper function is_signed_bundle in desktop-notifier
-        # see: https://github.com/samschott/desktop-notifier/issues/115
-        NSBundle = ObjCClass("NSBundle")
-        NSBundle.mainBundle.bundleIdentifier = "net.activitywatch.ActivityWatch"
+    if sys.platform == "darwin":
+        init_macos()
 
     if ctx.invoked_subcommand is None:
-        ctx.invoke(start)
+        ctx.invoke(start, testing=testing)
 
 
 @main.command()
-def start():
+@click.option("--testing", is_flag=True, help="Enables testing mode.")
+def start(testing=False):
     """Start the notification service."""
+    global aw
+    aw = aw_client.ActivityWatchClient("aw-notify", testing=testing)
+
     send_checkin()
     send_checkin_yesterday()
     start_hourly()
@@ -301,14 +313,19 @@ def threshold_alerts():
             status = alert.status()
             if status != getattr(alert, "last_status", None):
                 logger.debug(f"New status: {status}")
-                alert.last_status = status
+                setattr(alert, "last_status", status)
 
+        # TODO: make configurable, perhaps increase default to save resources
         sleep(10)
 
 
 @main.command()
-def checkin():
+@click.option("--testing", is_flag=True, help="Enables testing mode.")
+def checkin(testing=False):
     """Send a summary notification."""
+    global aw
+    aw = aw_client.ActivityWatchClient("aw-notify-checkin", testing=testing)
+
     send_checkin()
 
 
@@ -347,6 +364,7 @@ def get_active_status() -> Union[bool, None]:
     Returns True if user is active/not-afk, False if not.
     On error, like out-of-date event, returns None.
     """
+    assert aw
 
     hostname = aw.get_info().get("hostname", "unknown")
     events = aw.get_events(f"aw-watcher-afk_{hostname}", limit=1)

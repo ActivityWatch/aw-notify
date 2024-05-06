@@ -2,6 +2,7 @@
 Get time spent for different categories in a day,
 and send notifications to the user on predefined conditions.
 """
+
 import logging
 import sys
 import threading

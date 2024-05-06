@@ -10,6 +10,11 @@ test:
 typecheck:
 	poetry run mypy aw_notify --ignore-missing-imports
 
+PYFILES=$(shell find . -type f -name '*.py')
+
+format:
+	black ${PYFILES}
+
 package:
 	pyinstaller aw-notify.spec --clean --noconfirm
 

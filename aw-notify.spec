@@ -20,10 +20,11 @@ exe = EXE(pyz,
           a.scripts,
           exclude_binaries=True,
           name='aw-notify',
+          contents_directory=".",
           debug=False,
           strip=False,
           upx=True,
-          console=True )
+          console=True)
 coll = COLLECT(exe,
                a.binaries,
                a.zipfiles,

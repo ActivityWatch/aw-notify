@@ -48,7 +48,7 @@ jobs:
       run: |
           dist/aw-notify/aw-notify --help
     - name: Upload package
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v4
       with:
         name: aw-notify-${{ runner.os }}-py${{ matrix.python_version }}
         path: dist/aw-notify

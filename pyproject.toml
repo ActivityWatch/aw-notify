@@ -13,7 +13,7 @@ packages = [{include = "aw_notify"}]
 aw-notify = "aw_notify.main:main"
 
 [tool.poetry.dependencies]
-python = "^3.9,<3.12"
+python = "^3.9"
 aw-client = "^0.5.13"
 desktop-notifier = "^3.4.2"
 rubicon-objc = { version = "^0.4.0", platform = "darwin" }
@@ -21,7 +21,7 @@ rubicon-objc = { version = "^0.4.0", platform = "darwin" }
 [tool.poetry.group.dev.dependencies]
 black = "*"
 mypy = "*"
-pyinstaller = "^6.6"
+pyinstaller = { version = "^6.6", python = "^3.9,<3.14" }
 pytest = "^7.4"
 
 [build-system]

@@ -280,6 +280,7 @@ def start(testing=False):
     """Start the notification service."""
     global aw
     aw = aw_client.ActivityWatchClient("aw-notify", testing=testing)
+    aw.wait_for_start()
 
     send_checkin()
     send_checkin_yesterday()

@@ -347,6 +347,7 @@ def send_checkin(title="Time today", date=None):
 
     msg = ""
     msg += "\n".join(f"- {c}: {t}" for c, t in top_categories)
+    msg = msg.encode('utf-8').decode('unicode_escape')
     if msg:
         notify(title, msg)
     else:

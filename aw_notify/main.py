@@ -331,6 +331,25 @@ def checkin(testing=False):
     send_checkin()
 
 
+def decode_unicode_escapes(s: str):
+    """
+    Decodes any Unicode escape sequences present in the input string 
+    and returns the decoded result.
+
+    Args:
+        s (str): The input string which may contain Unicode escape sequences.
+
+    Returns:
+        str: The decoded string where Unicode escape sequences have been converted
+             to their corresponding characters.
+
+    Example:
+        Input: "\\u5de5\\u4f5c"
+        Output: "工作"
+    """
+    return s.encode('utf-8').decode('unicode_escape')
+
+
 def send_checkin(title="Time today", date=None):
     """
     Sends a summary notification of the day.
@@ -346,7 +365,7 @@ def send_checkin(title="Time today", date=None):
     ][:4]
 
     msg = ""
-    msg += "\n".join(f"- {c}: {t}" for c, t in top_categories)
+    msg += "\n".join(f"- {decode_unicode_escapes(c)}: {t}" for c, t in top_categories)
     if msg:
         notify(title, msg)
     else:

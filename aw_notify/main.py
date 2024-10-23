@@ -21,7 +21,7 @@ from typing import (
 import aw_client.queries
 import click
 from aw_core.log import setup_logging
-from desktop_notifier import DesktopNotifier
+from desktop_notifier import DesktopNotifierSync
 from typing_extensions import TypeAlias
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ td8h = timedelta(hours=8)
 # global objects
 # will init in entrypoints
 aw: Optional[AwClient] = None
-notifier: Optional[DesktopNotifier] = None
+notifier: Optional[DesktopNotifierSync] = None
 
 # executable path
 script_dir = Path(__file__).parent.absolute()
@@ -145,14 +145,14 @@ def notify(title: str, msg: str):
 
     global notifier
     if notifier is None:
-        notifier = DesktopNotifier(
+        notifier = DesktopNotifierSync(
             app_name="AW",
             app_icon=f"file://{icon_path}",
             notification_limit=10,
         )
 
     logger.info(f'Showing: "{title} - {msg}"')
-    notifier.send_sync(title=title, message=msg)
+    notifier.send(title=title, message=msg)
 
 
 class CategoryAlert:

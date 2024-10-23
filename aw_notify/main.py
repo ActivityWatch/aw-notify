@@ -21,7 +21,7 @@ from typing import (
 import aw_client.queries
 import click
 from aw_core.log import setup_logging
-from desktop_notifier import DesktopNotifierSync
+from desktop_notifier import DesktopNotifierSync, Icon
 from typing_extensions import TypeAlias
 
 logger = logging.getLogger(__name__)
@@ -147,7 +147,7 @@ def notify(title: str, msg: str):
     if notifier is None:
         notifier = DesktopNotifierSync(
             app_name="AW",
-            app_icon=f"file://{icon_path}",
+            app_icon=Icon(uri=f"file://{icon_path}"),
             notification_limit=10,
         )
 

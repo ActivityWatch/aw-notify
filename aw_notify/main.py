@@ -331,22 +331,13 @@ def checkin(testing=False):
     send_checkin()
 
 
-def decode_unicode_escapes(s: str):
+def decode_unicode_escapes(s: str) -> str:
     """
     Decodes any Unicode escape sequences present in the input string 
     and returns the decoded result.
-
-    Args:
-        s (str): The input string which may contain Unicode escape sequences.
-
-    Returns:
-        str: The decoded string where Unicode escape sequences have been converted
-             to their corresponding characters.
-
-    Example:
-        Input: "\\u5de5\\u4f5c"
-        Output: "工作"
     """
+    # see https://github.com/ActivityWatch/aw-notify/pull/6#issue-2607074123
+    # assert "工作" == decode_unicode_escapes("\\u5de5\\u4f5c")
     return s.encode('utf-8').decode('unicode_escape')
 
 

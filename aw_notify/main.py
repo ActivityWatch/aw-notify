@@ -331,6 +331,16 @@ def checkin(testing=False):
     send_checkin()
 
 
+def decode_unicode_escapes(s: str) -> str:
+    """
+    Decodes any Unicode escape sequences present in the input string 
+    and returns the decoded result.
+    """
+    # see https://github.com/ActivityWatch/aw-notify/pull/6
+    # assert "工作" == decode_unicode_escapes("\\u5de5\\u4f5c")
+    return s.encode('utf-8').decode('unicode_escape')
+
+
 def send_checkin(title="Time today", date=None):
     """
     Sends a summary notification of the day.
@@ -346,7 +356,7 @@ def send_checkin(title="Time today", date=None):
     ][:4]
 
     msg = ""
-    msg += "\n".join(f"- {c}: {t}" for c, t in top_categories)
+    msg += "\n".join(f"- {decode_unicode_escapes(c)}: {t}" for c, t in top_categories)
     if msg:
         notify(title, msg)
     else:

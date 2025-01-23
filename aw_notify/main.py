@@ -4,6 +4,8 @@ and send notifications to the user on predefined conditions.
 """
 
 import logging
+import shutil
+import subprocess
 import sys
 import threading
 from collections import defaultdict
@@ -142,17 +144,61 @@ def to_hms(duration: timedelta) -> str:
 
 def notify(title: str, msg: str):
     """send a notification to the user"""
-
     global notifier
-    if notifier is None:
-        notifier = DesktopNotifier(
-            app_name="AW",
-            app_icon=f"file://{icon_path}",
-            notification_limit=10,
-        )
 
     logger.info(f'Showing: "{title} - {msg}"')
-    notifier.send_sync(title=title, message=msg)
+
+    # Try terminal-notifier first on macOS
+    if sys.platform == "darwin":
+        if notify_terminal_notifier(title, msg):
+            return
+
+    # Fall back to desktop-notifier
+    try:
+        if notifier is None:
+            notifier = DesktopNotifier(
+                app_name="AW",
+                app_icon=f"file://{icon_path}",
+                notification_limit=10,
+            )
+        notifier.send_sync(title=title, message=msg)
+        return
+    except Exception as e:
+        logger.info(f"desktop-notifier not used: {e}")
+
+    # If all notification methods fail, log a warning
+    logger.warning("All notification methods failed")
+
+
+def notify_terminal_notifier(title: str, msg: str) -> bool:
+    """Send notification using terminal-notifier. Returns True if successful."""
+    if not shutil.which("terminal-notifier"):
+        return False
+    try:
+        result = subprocess.run(
+            [
+                "terminal-notifier",
+                "-title",
+                "ActivityWatch",
+                "-subtitle",
+                title,
+                "-message",
+                msg.strip("-").replace("- ", ", ").replace("\n", ""),
+                "-appIcon",
+                str(icon_path),
+                "-group",
+                title,
+                "-open",
+                "http://localhost:5600",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.returncode == 0
+    except Exception as e:
+        logger.warning(f"Failed to send notification using terminal-notifier: {e}")
+        return False
 
 
 class CategoryAlert:

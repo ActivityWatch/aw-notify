@@ -49,10 +49,12 @@ td8h = timedelta(hours=8)
 # will init in entrypoints
 aw: Optional[AwClient] = None
 notifier: Optional[DesktopNotifier] = None
+hostname: Optional[str] = None
+server_available: bool = True
 
 # executable path
 script_dir = Path(__file__).parent.absolute()
-icon_path = script_dir / ".." / "media" / "logo" / "logo.png"
+icon_path = (script_dir / ".." / "media" / "logo" / "logo.png").resolve()
 
 
 def cache_ttl(ttl: Union[timedelta, int]):
@@ -86,9 +88,9 @@ def cache_ttl(ttl: Union[timedelta, int]):
 def get_time(date=None, top_level_only=True) -> dict[str, timedelta]:
     """
     Returns a dict with the time spent today (or for `date`) for each category.
-    """
-    assert aw
 
+    Might throw exceptions if the query fails.
+    """
     if date is None:
         date = datetime.now(timezone.utc)
     date = date.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -99,7 +101,6 @@ def get_time(date=None, top_level_only=True) -> dict[str, timedelta]:
         )
     ]
 
-    hostname = aw.get_info().get("hostname", "unknown")
     canonicalQuery = aw_client.queries.canonicalEvents(
         aw_client.queries.DesktopQueryParams(
             bid_window=f"aw-watcher-window_{hostname}",
@@ -113,6 +114,7 @@ def get_time(date=None, top_level_only=True) -> dict[str, timedelta]:
     RETURN = {{"events": events, "duration": duration, "cat_events": cat_events}};
     """
 
+    # NOTE: caller needs to handle exceptions
     res = aw.query(query, timeperiods)[0]
     res["cat_events"] += [{"data": {"$category": ["All"]}, "duration": res["duration"]}]
 
@@ -184,8 +186,9 @@ def notify_terminal_notifier(title: str, msg: str) -> bool:
                 title,
                 "-message",
                 msg.strip("-").replace("- ", ", ").replace("\n", ""),
-                "-appIcon",
-                str(icon_path),
+                # Doesn't work
+                # "-appIcon",
+                # f"file://{icon_path}",
                 "-group",
                 title,
                 "-open",
@@ -255,7 +258,10 @@ class CategoryAlert:
         if now > (self.last_check + time_to_threshold):
             logger.debug(f"Updating {self.category}")
             # print(f"Time to threshold: {time_to_threshold}")
-            self.time_spent = get_time().get(self.category, timedelta())
+            try:
+                self.time_spent = get_time().get(self.category, timedelta())
+            except Exception as e:
+                logger.error(f"Error getting time for {self.category}: {e}")
             self.last_check = now
         else:
             pass
@@ -324,14 +330,16 @@ def main(ctx, verbose: bool, testing: bool):
 @click.option("--testing", is_flag=True, help="Enables testing mode.")
 def start(testing=False):
     """Start the notification service."""
-    global aw
+    global aw, hostname
     aw = aw_client.ActivityWatchClient("aw-notify", testing=testing)
     aw.wait_for_start()
+    hostname = aw.get_info().get("hostname", "unknown")
 
     send_checkin()
     send_checkin_yesterday()
     start_hourly()
     start_new_day()
+    start_server_monitor()
     threshold_alerts()
 
 
@@ -379,12 +387,12 @@ def checkin(testing=False):
 
 def decode_unicode_escapes(s: str) -> str:
     """
-    Decodes any Unicode escape sequences present in the input string 
+    Decodes any Unicode escape sequences present in the input string
     and returns the decoded result.
     """
     # see https://github.com/ActivityWatch/aw-notify/pull/6
     # assert "工作" == decode_unicode_escapes("\\u5de5\\u4f5c")
-    return s.encode('utf-8').decode('unicode_escape')
+    return s.encode("utf-8").decode("unicode_escape")
 
 
 def send_checkin(title="Time today", date=None):
@@ -392,7 +400,11 @@ def send_checkin(title="Time today", date=None):
     Sends a summary notification of the day.
     Meant to be sent at a particular time, like at the end of a working day (e.g. 5pm).
     """
-    cat_time = get_time(date=date)
+    try:
+        cat_time = get_time(date=date)
+    except Exception as e:
+        logger.error(f"Error getting time: {e}")
+        return
 
     # get the 4 top categories by time spent.
     top_categories = [
@@ -415,6 +427,16 @@ def send_checkin_yesterday():
     send_checkin(title="Time yesterday", date=yesterday)
 
 
+def check_server_availability() -> bool:
+    """Check if the ActivityWatch server is available."""
+    try:
+        aw.get_info()
+        return True
+    except Exception as e:
+        logger.warning(f"Server check failed: {e}")
+        return False
+
+
 @cache_ttl(60)
 def get_active_status() -> Union[bool, None]:
     """
@@ -424,7 +446,6 @@ def get_active_status() -> Union[bool, None]:
     """
     assert aw
 
-    hostname = aw.get_info().get("hostname", "unknown")
     events = aw.get_events(f"aw-watcher-afk_{hostname}", limit=1)
     logger.debug(events)
     if not events:
@@ -470,6 +491,27 @@ def start_hourly():
             send_checkin()
 
     threading.Thread(target=checkin_thread, daemon=True).start()
+
+
+def server_check_loop():
+    """Periodically check server availability and send notifications."""
+    global server_available
+    while True:
+        current_status = check_server_availability()
+        if current_status != server_available:
+            if current_status:
+                notify("Server Available", "ActivityWatch server is back online.")
+            else:
+                notify(
+                    "Server Unavailable",
+                    "ActivityWatch server is down. Data may not be saved!",
+                )
+            server_available = current_status
+        sleep(10)  # Check every 10 seconds
+
+
+def start_server_monitor():
+    threading.Thread(target=server_check_loop, daemon=True).start()
 
 
 def start_new_day():

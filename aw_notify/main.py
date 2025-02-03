@@ -29,7 +29,7 @@ from typing_extensions import TypeAlias
 logger = logging.getLogger(__name__)
 
 # Types
-AwClient = aw_client.ActivityWatchClient
+AwClient: TypeAlias = aw_client.ActivityWatchClient
 CacheKey: TypeAlias = tuple
 
 # Constants
@@ -91,6 +91,7 @@ def get_time(date=None, top_level_only=True) -> dict[str, timedelta]:
 
     Might throw exceptions if the query fails.
     """
+    assert aw
     if date is None:
         date = datetime.now(timezone.utc)
     date = date.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -429,6 +430,7 @@ def send_checkin_yesterday():
 
 def check_server_availability() -> bool:
     """Check if the ActivityWatch server is available."""
+    assert aw
     try:
         aw.get_info()
         return True

@@ -3,6 +3,7 @@ Get time spent for different categories in a day,
 and send notifications to the user on predefined conditions.
 """
 
+import asyncio
 import logging
 import shutil
 import subprocess
@@ -23,7 +24,7 @@ from typing import (
 import aw_client.queries
 import click
 from aw_core.log import setup_logging
-from desktop_notifier import DesktopNotifier
+from desktop_notifier import DesktopNotifier, Icon
 from typing_extensions import TypeAlias
 
 logger = logging.getLogger(__name__)
@@ -161,10 +162,19 @@ def notify(title: str, msg: str):
         if notifier is None:
             notifier = DesktopNotifier(
                 app_name="AW",
-                app_icon=f"file://{icon_path}",
+                app_icon=Icon(uri=f"file://{icon_path}"),
                 notification_limit=10,
             )
-        notifier.send_sync(title=title, message=msg)
+
+        # Get or create event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        # Send notification
+        loop.run_until_complete(notifier.send(title=title, message=msg))
         return
     except Exception as e:
         logger.info(f"desktop-notifier not used: {e}")

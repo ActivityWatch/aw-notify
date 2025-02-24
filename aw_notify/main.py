@@ -325,7 +325,8 @@ def init_macos():
 @click.pass_context
 @click.option("-v", "--verbose", is_flag=True, help="Verbose logging.")
 @click.option("--testing", is_flag=True, help="Enables testing mode.")
-def main(ctx, verbose: bool, testing: bool):
+@click.option("--port", type=int, default=5600, help="Port to connect to ActivityWatch server.")
+def main(ctx, verbose: bool, testing: bool, port: int):
     setup_logging("aw-notify", testing=testing, verbose=verbose, log_file=True)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logger.info("Starting...")
@@ -334,15 +335,16 @@ def main(ctx, verbose: bool, testing: bool):
         init_macos()
 
     if ctx.invoked_subcommand is None:
-        ctx.invoke(start, testing=testing)
+        ctx.invoke(start, testing=testing, port=port)
 
 
 @main.command()
 @click.option("--testing", is_flag=True, help="Enables testing mode.")
-def start(testing=False):
+@click.option("--port", type=int, default=5600, help="Port to connect to ActivityWatch server.")
+def start(testing=False, port=5600):
     """Start the notification service."""
     global aw, hostname
-    aw = aw_client.ActivityWatchClient("aw-notify", testing=testing)
+    aw = aw_client.ActivityWatchClient("aw-notify", testing=testing, port=port)
     aw.wait_for_start()
     hostname = aw.get_info().get("hostname", "unknown")
 

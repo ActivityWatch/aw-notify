@@ -321,11 +321,33 @@ def init_macos():
     NSBundle.mainBundle.bundleIdentifier = "net.activitywatch.ActivityWatch"
 
 
+def common_options(func):
+    """Common click options used across commands."""
+    options = [
+        click.option("--testing", is_flag=True, help="Enables testing mode."),
+        click.option(
+            "--port",
+            type=int,
+            default=None,
+            help="Port to connect to ActivityWatch server (default: 5600, or 5666 for testing).",
+        ),
+    ]
+    for option in reversed(options):
+        func = option(func)
+    return func
+
+
 @click.group(invoke_without_command=True)
 @click.pass_context
 @click.option("-v", "--verbose", is_flag=True, help="Verbose logging.")
-@click.option("--testing", is_flag=True, help="Enables testing mode.")
-def main(ctx, verbose: bool, testing: bool):
+@common_options
+def main(ctx, verbose: bool, testing: bool, port: Optional[int]):
+    """
+    ActivityWatch notification service.
+
+    Sends notifications based on computer usage data from ActivityWatch.
+    Can connect to a custom ActivityWatch server port (default: 5600, or 5666 for testing).
+    """
     setup_logging("aw-notify", testing=testing, verbose=verbose, log_file=True)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logger.info("Starting...")
@@ -334,15 +356,16 @@ def main(ctx, verbose: bool, testing: bool):
         init_macos()
 
     if ctx.invoked_subcommand is None:
-        ctx.invoke(start, testing=testing)
+        ctx.invoke(start, testing=testing, port=port)
 
 
 @main.command()
-@click.option("--testing", is_flag=True, help="Enables testing mode.")
-def start(testing=False):
+@common_options
+def start(testing=False, port=None):
     """Start the notification service."""
     global aw, hostname
-    aw = aw_client.ActivityWatchClient("aw-notify", testing=testing)
+
+    aw = aw_client.ActivityWatchClient("aw-notify", testing=testing, port=port)
     aw.wait_for_start()
     hostname = aw.get_info().get("hostname", "unknown")
 

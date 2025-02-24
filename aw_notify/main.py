@@ -326,13 +326,10 @@ def init_macos():
 @click.option("-v", "--verbose", is_flag=True, help="Verbose logging.")
 @click.option("--testing", is_flag=True, help="Enables testing mode.")
 @click.option("--port", type=int, default=None, help="Port to connect to ActivityWatch server.")
-def main(ctx, verbose: bool, testing: bool, port: int):
+def main(ctx, verbose: bool, testing: bool, port: Optional[int]):
     setup_logging("aw-notify", testing=testing, verbose=verbose, log_file=True)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logger.info("Starting...")
-
-    if port is None:
-        port = 5666 if testing else 5600
 
     if sys.platform == "darwin":
         init_macos()
@@ -347,9 +344,6 @@ def main(ctx, verbose: bool, testing: bool, port: int):
 def start(testing=False, port=None):
     """Start the notification service."""
     global aw, hostname
-
-    if port is None:
-        port = 5666 if testing else 5600
 
     aw = aw_client.ActivityWatchClient("aw-notify", testing=testing, port=port)
     aw.wait_for_start()

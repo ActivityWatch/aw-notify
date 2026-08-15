@@ -1,6 +1,8 @@
 aw-notify
 =========
 
+> **Note:** This Python implementation is being replaced by [aw-notify-rs](https://github.com/ActivityWatch/aw-notify-rs). New users should use the Rust version instead.
+
 A notification service for ActivityWatch.
 
 Still work-in-progress, but it is pretty simple and should work fine.
